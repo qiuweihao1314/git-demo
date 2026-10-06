@@ -1,26 +1,68 @@
 #include "tcpserver.h"
 
 TcpServer::TcpServer(QObject *parent)
-    : QTcpServer(parent)
+    : QObject(parent)
 {
+    m_tcpServer = new QTcpServer(this);
+    connect(m_tcpServer, &QTcpServer::newConnection, this, &TcpServer::onNewConnection);
 }
 
-void TcpServer::incomingConnection(qintptr socketDescriptor)
+bool TcpServer::listen(const QHostAddress &address, quint16 port)
 {
-    m_clientSocket = new QTcpSocket(this);
-    m_clientSocket->setSocketDescriptor(socketDescriptor);
+    return m_tcpServer->listen(address, port);
+}
 
-    qDebug() << "客户端连接成功";
+void TcpServer::onNewConnection()
+{
+    m_socket = m_tcpServer->nextPendingConnection();
+    connect(m_socket, &QTcpSocket::readyRead, this, &TcpServer::onReadyRead);
+}
 
-    connect(m_clientSocket, &QTcpSocket::readyRead, this, [=](){
-        QByteArray data = m_clientSocket->readAll();
-        qDebug() << "收到客户端数据：" << data;
-        m_clientSocket->write("Server received your message!");
+void TcpServer::onReadyRead()
+{
+    m_recvBuf.append(m_socket->readAll());
 
-    });
+    while(true)
+    {
+        if(m_waitLen == 0)
+        {
+            if(m_recvBuf.size() >= 4)
+            {
+                QByteArray head = m_recvBuf.left(4);
+                m_waitLen = *(quint32*)head.data();
+                m_recvBuf.remove(0,4);
+            }
+            else
+            {
+                break;
+            }
+        }
+        else
+        {
+            if(m_recvBuf.size() >= m_waitLen)
+            {
+                QByteArray body = m_recvBuf.left(m_waitLen);
+                qDebug() << "收到完整消息：" << body;
 
-    connect(m_clientSocket, &QTcpSocket::disconnected, this, [=](){
-        qDebug() << "客户端断开";
-        m_clientSocket->deleteLater();
-    });
+                // 收到消息可以回复示例
+                // sendMsg("服务端收到你的消息");
+
+                m_recvBuf.remove(0, m_waitLen);
+                m_waitLen = 0;
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+}
+
+void TcpServer::sendMsg(const QByteArray &data)
+{
+    QByteArray sendBuf;
+    quint32 len = data.size();
+    sendBuf.append((char*)&len, 4);
+    sendBuf.append(data);
+    m_socket->write(sendBuf);
 }

@@ -1,24 +1,59 @@
 #include "tcpclient.h"
 
 TcpClient::TcpClient(QObject *parent)
-    : QTcpSocket(parent)
+    : QObject(parent)
 {
-    connect(this, &QTcpSocket::readyRead, this, [=](){
-        QByteArray data = this->readAll();
-        qDebug() << "客户端收到服务器回复：" << data;
-    });
-
-    connect(this, &QTcpSocket::connected, this, [=](){
-        qDebug() << "客户端成功连上服务器";
-        this->write("Hello Server!");
-    });
-
-    connect(this, &QTcpSocket::errorOccurred, this, [=](QAbstractSocket::SocketError err){
-        qDebug() << "客户端连接错误：" << this->errorString();
-    });
+    m_socket = new QTcpSocket(this);
+    connect(m_socket, &QTcpSocket::readyRead, this, &TcpClient::onReadyRead);
 }
 
 void TcpClient::connectToServer(const QString &ip, quint16 port)
 {
-    this->connectToHost(ip, port);
+    m_socket->connectToHost(ip, port);
+}
+
+void TcpClient::onReadyRead()
+{
+    m_recvBuf.append(m_socket->readAll());
+
+    while(true)
+    {
+        if(m_waitLen == 0)
+        {
+            if(m_recvBuf.size() >= 4)
+            {
+                QByteArray head = m_recvBuf.left(4);
+                m_waitLen = *(quint32*)head.data();
+                m_recvBuf.remove(0,4);
+            }
+            else
+            {
+                break;
+            }
+        }
+        else
+        {
+            if(m_recvBuf.size() >= m_waitLen)
+            {
+                QByteArray body = m_recvBuf.left(m_waitLen);
+                qDebug() << "客户端收到完整消息：" << body;
+
+                m_recvBuf.remove(0, m_waitLen);
+                m_waitLen = 0;
+            }
+            else
+            {
+                break;
+            }
+        }
+    }
+}
+
+void TcpClient::sendMsg(const QByteArray &data)
+{
+    QByteArray sendBuf;
+    quint32 len = data.size();
+    sendBuf.append((char*)&len, 4);
+    sendBuf.append(data);
+    m_socket->write(sendBuf);
 }
